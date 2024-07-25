@@ -26,6 +26,9 @@ builds:
 brews:
   - name: test-splitter
     skip_upload: true
+    repository:
+      name: homebrew-buildkite
+      owner: nprizal
 
 dockers:
   - image_templates:
