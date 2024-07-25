@@ -2,6 +2,9 @@ version: 2
 
 release:
   name_template: Test Splitter v{{.Version}}
+  github:
+    owner: nprizal
+    name: test-splitter
   draft: false
   prerelease: auto
   make_latest: false
@@ -19,6 +22,9 @@ builds:
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags: "-X 'main.Version=v{{ .Version }}'"
+
+brews:
+  skip_upload: true
 
 dockers:
   - image_templates:
