@@ -10,8 +10,8 @@ release:
   make_latest: false
   mode: replace
 
-changelog:
-  use: github-native
+# changelog:
+#   use: github-native
   
 archives:
   - format: binary
