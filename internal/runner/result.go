@@ -1,14 +1,14 @@
 package runner
 
-type TestStatus string
+type Status string
 
 const (
-	TestStatusPassed TestStatus = "passed"
-	TestStatusFailed TestStatus = "failed"
-	TestStatusError  TestStatus = "error"
+	StatusPassed Status = "passed"
+	StatusFailed Status = "failed"
+	StatusError  Status = "error"
 )
 
-type TestResult struct {
-	Status      TestStatus
+type Result struct {
+	Status      Status
 	FailedTests []string
 }

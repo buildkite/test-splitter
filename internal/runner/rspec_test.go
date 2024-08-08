@@ -70,8 +70,8 @@ func TestRspecRun(t *testing.T) {
 	files := []string{"./fixtures/spec/spells/expelliarmus_spec.rb"}
 	got, err := rspec.Run(files, false)
 
-	want := TestResult{
-		Status: TestStatusPassed,
+	want := Result{
+		Status: StatusPassed,
 	}
 
 	if err != nil {
@@ -91,8 +91,8 @@ func TestRspecRun_Retry(t *testing.T) {
 	files := []string{}
 	got, err := rspec.Run(files, true)
 
-	want := TestResult{
-		Status: TestStatusPassed,
+	want := Result{
+		Status: StatusPassed,
 	}
 
 	if err != nil {
@@ -111,8 +111,8 @@ func TestRspecRun_TestFailed(t *testing.T) {
 	files := []string{"./fixtures/spec/failure_spec.rb"}
 	got, err := rspec.Run(files, false)
 
-	want := TestResult{
-		Status:      TestStatusFailed,
+	want := Result{
+		Status:      StatusFailed,
 		FailedTests: []string{"./fixtures/spec/failure_spec.rb[1:1]"},
 	}
 
@@ -132,8 +132,8 @@ func TestRspecRun_CommandFailed(t *testing.T) {
 	files := []string{}
 	got, err := rspec.Run(files, false)
 
-	want := TestResult{
-		Status: TestStatusError,
+	want := Result{
+		Status: StatusError,
 	}
 
 	if diff := cmp.Diff(got, want); diff != "" {
@@ -154,8 +154,8 @@ func TestRspecRun_SignaledError(t *testing.T) {
 
 	got, err := rspec.Run(files, false)
 
-	want := TestResult{
-		Status: TestStatusError,
+	want := Result{
+		Status: StatusError,
 	}
 
 	if diff := cmp.Diff(got, want); diff != "" {
