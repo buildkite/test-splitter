@@ -3,178 +3,171 @@ package runner
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"syscall"
 	"testing"
 
 	"github.com/buildkite/test-splitter/internal/plan"
 	"github.com/google/go-cmp/cmp"
-	"github.com/kballard/go-shellquote"
 )
 
-func TestNewRspec_DefaultCommand(t *testing.T) {
-	defaultCommand := "bundle exec rspec {{testExamples}}"
-	rspec := NewRspec(Rspec{})
+func TestNewRspec(t *testing.T) {
+	cases := []struct {
+		input Rspec
+		want  Rspec
+	}{
+		//default
+		{
+			input: Rspec{},
+			want: Rspec{
+				TestCommand:            "bundle exec rspec --format progress {{testExamples}}",
+				TestFilePattern:        "spec/**/*_spec.rb",
+				TestFileExcludePattern: "",
+				RetryTestCommand:       "bundle exec rspec --format progress {{testExamples}}",
+			},
+		},
+		// custom
+		{
+			input: Rspec{
+				TestCommand:            "bin/rspec --format documentation {{testExamples}}",
+				TestFilePattern:        "spec/models/**/*_spec.rb",
+				TestFileExcludePattern: "spec/features/**/*_spec.rb",
+				RetryTestCommand:       "bin/rspec --fail-fast {{testExamples}}",
+			},
+			want: Rspec{
+				TestCommand:            "bin/rspec --format documentation {{testExamples}}",
+				TestFilePattern:        "spec/models/**/*_spec.rb",
+				TestFileExcludePattern: "spec/features/**/*_spec.rb",
+				RetryTestCommand:       "bin/rspec --fail-fast {{testExamples}}",
+			},
+		},
+		// RetryTestCommand fallback to TestCommand
+		{
+			input: Rspec{
+				TestCommand: "bundle exec --format json --out out.json {{testExamples}}",
+			},
+			want: Rspec{
+				TestCommand:            "bundle exec --format json --out out.json {{testExamples}}",
+				TestFilePattern:        "spec/**/*_spec.rb",
+				TestFileExcludePattern: "",
+				RetryTestCommand:       "bundle exec --format json --out out.json {{testExamples}}",
+			},
+		},
+	}
 
-	if rspec.TestCommand != defaultCommand {
-		t.Errorf("rspec.TestCommand = %q, want %q", rspec.TestCommand, defaultCommand)
+	for _, c := range cases {
+		got := NewRspec(c.input)
+		if diff := cmp.Diff(got, &c.want); diff != "" {
+			t.Errorf("NewRspec(%v) diff (-got +want):\n%s", c.input, diff)
+		}
 	}
 }
 
-func TestNewRspec_CustomCommand(t *testing.T) {
-	customCommand := "bin/rspec --options {{testExamples}} --format"
+func TestRspecRun(t *testing.T) {
 	rspec := NewRspec(Rspec{
-		TestCommand: customCommand,
+		TestCommand: "rspec",
 	})
+	files := []string{"./fixtures/spec/spells/expelliarmus_spec.rb"}
+	got, err := rspec.Run(files, false)
 
-	if rspec.TestCommand != customCommand {
-		t.Errorf("rspec.TestCommand = %q, want %q", rspec.TestCommand, customCommand)
+	want := Result{
+		Status: StatusPassed,
 	}
-}
 
-func TestNewRspec_DefaultPattern(t *testing.T) {
-	rspec := NewRspec(Rspec{})
-	got := rspec.TestFilePattern
-
-	want := "spec/**/*_spec.rb"
+	if err != nil {
+		t.Errorf("Rspec.Run(%q) error = %v", files, err)
+	}
 
 	if diff := cmp.Diff(got, want); diff != "" {
-		t.Errorf("Rspec.TestFilePattern diff (-got +want):\n%s", diff)
+		t.Errorf("Rspec.Run(%q) diff (-got +want):\n%s", files, diff)
 	}
 }
 
-func TestNewRspec_CustomPattern(t *testing.T) {
-	os.Setenv("BUILDKITE_SPLITTER_TEST_FILE_PATTERN", "spec/models/**/*_spec.rb")
-	defer os.Unsetenv("BUILDKITE_SPLITTER_TEST_FILE_PATTERN")
+func TestRspecRun_Retry(t *testing.T) {
+	rspec := Rspec{
+		TestCommand:      "rspec --invalid-option",
+		RetryTestCommand: "rspec",
+	}
+	files := []string{}
+	got, err := rspec.Run(files, true)
 
-	rspec := NewRspec(Rspec{
-		TestFilePattern: "spec/models/**/*_spec.rb",
-	})
-	got := rspec.TestFilePattern
+	want := Result{
+		Status: StatusPassed,
+	}
 
-	want := "spec/models/**/*_spec.rb"
+	if err != nil {
+		t.Errorf("Rspec.Run(%q) error = %v", files, err)
+	}
 
 	if diff := cmp.Diff(got, want); diff != "" {
-		t.Errorf("Rspec.TestFilePattern diff (-got +want):\n%s", diff)
+		t.Errorf("Rspec.Run(%q) diff (-got +want):\n%s", files, diff)
 	}
 }
 
-func TestNewRspec_EcludePattern(t *testing.T) {
-	os.Setenv("BUILDKITE_SPLITTER_TEST_FILE_EXCLUDE_PATTERN", "spec/features/**")
-	defer os.Unsetenv("BUILDKITE_SPLITTER_TEST_FILE_EXCLUDE_PATTERN")
-
+func TestRspecRun_TestFailed(t *testing.T) {
 	rspec := NewRspec(Rspec{
-		TestFileExcludePattern: "spec/features/**",
+		TestCommand: "rspec",
 	})
-	got := rspec.TestFileExcludePattern
+	files := []string{"./fixtures/spec/failure_spec.rb"}
+	got, err := rspec.Run(files, false)
 
-	want := "spec/features/**"
+	want := Result{
+		Status:      StatusFailed,
+		FailedTests: []string{"./fixtures/spec/failure_spec.rb[1:1]"},
+	}
+
+	if err != nil {
+		t.Errorf("Rspec.Run(%q) error = %v", files, err)
+	}
 
 	if diff := cmp.Diff(got, want); diff != "" {
-		t.Errorf("Rspec.TestFilePattern diff (-got +want):\n%s", diff)
+		t.Errorf("Rspec.Run(%q) diff (-got +want):\n%s", files, diff)
 	}
 }
 
-func TestCommandNameAndArgs_WithInterpolationPlaceholder(t *testing.T) {
-	testCases := []string{"spec/models/user_spec.rb", "spec/models/billing_spec.rb"}
-	testCommand := "bin/rspec --options {{testExamples}} --format"
-	rspec := NewRspec(Rspec{
-		TestCommand: testCommand,
-	})
+func TestRspecRun_CommandFailed(t *testing.T) {
+	rspec := Rspec{
+		TestCommand: "rspec --invalid-option",
+	}
+	files := []string{}
+	got, err := rspec.Run(files, false)
 
-	gotName, gotArgs, err := rspec.commandNameAndArgs(testCases)
-	if err != nil {
-		t.Errorf("Rspec.commandNameAndArgs(%q, %q) error = %v", testCases, testCommand, err)
+	want := Result{
+		Status: StatusError,
 	}
 
-	wantName := "bin/rspec"
-	wantArgs := []string{"--options", "spec/models/user_spec.rb", "spec/models/billing_spec.rb", "--format"}
-
-	if diff := cmp.Diff(gotName, wantName); diff != "" {
-		t.Errorf("Rspec.commandNameAndArgs(%q, %q) diff (-got +want):\n%s", testCases, testCommand, diff)
+	if diff := cmp.Diff(got, want); diff != "" {
+		t.Errorf("Rspec.Run(%q) diff (-got +want):\n%s", files, diff)
 	}
-	if diff := cmp.Diff(gotArgs, wantArgs); diff != "" {
-		t.Errorf("Rspec.commandNameAndArgs(%q, %q) diff (-got +want):\n%s", testCases, testCommand, diff)
+
+	exitError := new(exec.ExitError)
+	if !errors.As(err, &exitError) {
+		t.Errorf("Expected exec.ExitError, but got %v", err)
 	}
 }
 
-func TestCommandNameAndArgs_WithoutInterpolationPlaceholder(t *testing.T) {
-	testCases := []string{"spec/models/user_spec.rb", "spec/models/billing_spec.rb"}
-	testCommand := "bin/rspec --options --format"
+func TestRspecRun_SignaledError(t *testing.T) {
 	rspec := NewRspec(Rspec{
-		TestCommand: testCommand,
+		TestCommand: "../../test/support/segv.sh",
 	})
+	files := []string{"./fixtures/spec/failure_spec.rb"}
 
-	gotName, gotArgs, err := rspec.commandNameAndArgs(testCases)
-	if err != nil {
-		t.Errorf("Rspec.commandNameAndArgs(%q, %q) error = %v", testCases, testCommand, err)
+	got, err := rspec.Run(files, false)
+
+	want := Result{
+		Status: StatusError,
 	}
 
-	wantName := "bin/rspec"
-	wantArgs := []string{"--options", "--format", "spec/models/user_spec.rb", "spec/models/billing_spec.rb"}
-
-	if diff := cmp.Diff(gotName, wantName); diff != "" {
-		t.Errorf("Rspec.commandNameAndArgs(%q, %q) diff (-got +want):\n%s", testCases, testCommand, diff)
-	}
-	if diff := cmp.Diff(gotArgs, wantArgs); diff != "" {
-		t.Errorf("Rspec.commandNameAndArgs(%q, %q) diff (-got +want):\n%s", testCases, testCommand, diff)
-	}
-}
-
-func TestCommandNameAndArgs_InvalidTestCommand(t *testing.T) {
-	testCases := []string{"spec/models/user_spec.rb", "spec/models/billing_spec.rb"}
-	testCommand := "bin/rspec --options ' {{testExamples}}"
-	rspec := NewRspec(Rspec{
-		TestCommand: testCommand,
-	})
-
-	gotName, gotArgs, err := rspec.commandNameAndArgs(testCases)
-
-	wantName := ""
-	wantArgs := []string{}
-
-	if diff := cmp.Diff(gotName, wantName); diff != "" {
-		t.Errorf("Rspec.commandNameAndArgs() diff (-got +want):\n%s", diff)
-	}
-	if diff := cmp.Diff(gotArgs, wantArgs); diff != "" {
-		t.Errorf("Rspec.commandNameAndArgs() diff (-got +want):\n%s", diff)
-	}
-	if !errors.Is(err, shellquote.UnterminatedSingleQuoteError) {
-		t.Errorf("Rspec.commandNameAndArgs() error = %v, want %v", err, shellquote.UnterminatedSingleQuoteError)
-	}
-}
-
-func TestRetryCommand_DefaultRetryCommand(t *testing.T) {
-	testCommand := "bin/rspec --options {{testExamples}}"
-	rspec := NewRspec(Rspec{
-		TestCommand: testCommand,
-	})
-
-	got, err := rspec.RetryCommand()
-	if err != nil {
-		t.Errorf("Rspec.RetryCommand() error = %v", err)
+	if diff := cmp.Diff(got, want); diff != "" {
+		t.Errorf("Rspec.Run(%q) diff (-got +want):\n%s", files, diff)
 	}
 
-	want := "bin/rspec --options --only-failures"
-	if diff := cmp.Diff(got.String(), want); diff != "" {
-		t.Errorf("Rspec.RetryCommand() diff (-got +want):\n%s", diff)
+	signalError := new(ProcessSignaledError)
+	if !errors.As(err, &signalError) {
+		t.Errorf("Expected ErrProcessSignaled, but got %v", err)
 	}
-}
-
-func TestRetryCommand_CustomRetryCommand(t *testing.T) {
-	testCommand := "bin/rspec --options {{testExamples}}"
-	retryCommand := "bin/rspec --only-failures --fast-fail"
-	rspec := NewRspec(Rspec{
-		TestCommand:      testCommand,
-		RetryTestCommand: retryCommand,
-	})
-
-	got, err := rspec.RetryCommand()
-	if err != nil {
-		t.Errorf("Rspec.RetryCommand() error = %v", err)
-	}
-
-	want := "bin/rspec --only-failures --fast-fail"
-	if diff := cmp.Diff(got.String(), want); diff != "" {
-		t.Errorf("Rspec.RetryCommand() diff (-got +want):\n%s", diff)
+	if signalError.Signal != syscall.SIGSEGV {
+		t.Errorf("Expected signal %d, but got %d", syscall.SIGSEGV, signalError.Signal)
 	}
 }
 
