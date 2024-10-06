@@ -1,0 +1,13 @@
+{
+  "name": "playwright-example",
+  "devDependencies": {
+    "@playwright/test": "^1.38.1"
+  },
+  "scripts": {
+    "start": "yarn run http-server -p 8080",
+    "test": "yarn run playwright test"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1"
+  }
+}
